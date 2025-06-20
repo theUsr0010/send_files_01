@@ -205,7 +205,7 @@ def process_json_file(file_name):
         if video_flag:
             download_decrypt_merge(title=ep_num)
       
-def get_bot_config(client, db_name, collection_name='tele_bot_1', bot_uname="user_info_b_1_bot"):
+def get_bot_config(client, db_name='STORING_KEYS', collection_name='tele_bot_1', bot_uname="user_info_b_1_bot"):
     """
     Fetch a document where TELEGRAM_BOT_UNAME matches the given bot username.
 
