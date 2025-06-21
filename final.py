@@ -1,108 +1,270 @@
-import os
-import asyncio
-import nest_asyncio
-from telethon import TelegramClient
-import m3u8, requests, json, shutil
+import m3u8,os,requests,json
 from Crypto.Cipher import AES
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 from pymongo import MongoClient
-import traceback  # ✅ Import traceback for detailed error logging
+from pymongo import ReturnDocument
 
-from vid_utils import (
-    get_json_file_data,
-    process_json_file,
-    get_bot_config,
-    fetch_session_by_name,
-    get_unprocessed_file_object,
-    mark_file_status,
-    download_mega_file
-)
-from send_files_to_tg import upload_videos_to_telegram
-from mega import Mega
+# MongoDB Atlas connection URI
 
-# ✅ Allow nested async loops (for Colab/Jupyter/async issues)
-nest_asyncio.apply()
+# MongoDB Client setup
 
-# 🔧 Configs
-SESSION_NAME = 'session_1.session'
-VIDEO_DIR = 'videos'
 
-# 🌐 MongoDB setup
-mongo_url = os.getenv("MONGO_URL")
-client = MongoClient(mongo_url)
 
-# If you were using MEGA before, this part is now disabled
-# mega_keys = os.getenv("M_TOKEN")
-# if not mega_keys:
-#     raise Exception("❌ M_TOKEN not set in environment.")
-# user, pwd = mega_keys.split("_")
-# m = Mega().login(user, pwd)
+# Headers to bypass protection
+headers = {
+    "accept": "*/*",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-US,en;q=0.9,te;q=0.8,hi;q=0.7",
+    "cache-control": "no-cache",
+    "origin": "https://www.miruro.tv",
+    "pragma": "no-cache",
+    "referer": "https://www.miruro.tv/",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+}
 
-# 🔁 Main processing loop
-while True:
-    # 🛡 Re-fetch bot config inside loop in case it changes
-    keys_doc = get_bot_config(client)
-    if not keys_doc:
-        print("❌ Bot keys not found. Exiting.")
-        break
+def download_mega_file(m,file_name_url):
+    try:
+        m.download_url(file_name_url)
+        return True
+    except Exception as e:
+        print("Error  : ",e)
+        return False
 
-    # Step 1: Lock a document to process
-    doc = get_unprocessed_file_object(client)
-    if not doc:
-        print("✅ No files left to process.")
-        break
+def get_unprocessed_file_object(client):
+    """
+    Atomically fetch and lock one unprocessed document for exclusive processing.
 
-    filename = doc["filename"]
-    print(f"📄 Processing: {filename}")
+    Args:
+        client: pymongo.MongoClient instance
+
+    Returns:
+        dict or None: Locked document for processing, or None if none available.
+    """
+    db = client["miruai_tv_1"]
+    collection = db["cloud_files"]
+
+    query = {
+        "$and": [
+            {
+                "$or": [
+                    {"file_processed": False},
+                    {"file_processed": {"$exists": False}}
+                ]
+            },
+            {
+                "$or": [
+                    {"processing": False},
+                    {"processing": {"$exists": False}}
+                ]
+            }
+        ]
+    }
+
+    update = {
+        "$set": {"processing": True}
+    }
+
+    doc = collection.find_one_and_update(
+        query,
+        update,
+        return_document=ReturnDocument.AFTER
+    )
+
+    return doc
+
+
+def mark_file_status(client, filename, success):
+    """
+    Mark a document as processed or reset its lock on failure.
+
+    Args:
+        client: pymongo.MongoClient instance
+        filename: str, the filename of the document
+        success: bool, True if processing succeeded, False otherwise
+    """
+    db = client["miruai_tv_1"]
+    collection = db["cloud_files"]
+
+    if success:
+        update = {
+            "$set": {"file_processed": True},
+            "$unset": {"processing": ""}
+        }
+    else:
+        update = {
+            "$set": {"file_processed": False},
+            "$unset": {"processing": ""}
+        }
+
+    collection.update_one({"filename": filename}, update)
+
+
+
+def download_decrypt_merge(title, m3u8_file='video.m3u8'):
+    """
+    Downloads and decrypts .ts video segments from an M3U8 playlist and merges them into a single MP4 file.
+
+    Args:
+        title (str or int): The filename (without extension) for the final .mp4 file.
+        m3u8_file (str): Path to the downloaded M3U8 file.
+    """
+    print(f"📥 Processing M3U8: {m3u8_file}")
+
+    # Step 1: Load the m3u8 file
+    playlist = m3u8.load(m3u8_file)
+
+    # Step 2: Get AES-128 Key
+    key_uri = playlist.keys[0].uri
+    key_response = requests.get(key_uri, headers=headers)
+    key = key_response.content
+
+    # Step 3: Download and Decrypt Segments in Parallel
+    def download_and_decrypt(segment):
+        segment_url = segment.uri
+        segment_data = requests.get(segment_url, headers=headers).content
+        cipher = AES.new(key, AES.MODE_CBC, iv=key)
+        decrypted_data = cipher.decrypt(segment_data)
+        return decrypted_data
+
+    print("⏳ Downloading and decrypting segments...")
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        decrypted_segments = list(tqdm(executor.map(download_and_decrypt, playlist.segments), total=len(playlist.segments)))
+
+    # Step 4: Merge all decrypted segments into one file
+    ts_file = f"{title}.ts"
+    with open(ts_file, 'wb') as final_file:
+        for segment in decrypted_segments:
+            final_file.write(segment)
+
+    # Step 5: Rename the final file to .mp4
+    mp4_file = f"./videos/{title}.mp4"
+    os.rename(ts_file, mp4_file)
+
+    print(f"✅ Done! Video saved as '{mp4_file}'.")
+
+
+def download_m3u8(url, filename="video.m3u8"):
+    """
+    Downloads an .m3u8 playlist file from the provided URL and saves it locally.
+
+    Args:
+        url (str): The m3u8 URL.
+        filename (str): The output filename (default is 'video.m3u8').
+    """
+    headers = {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-language": "en-US,en;q=0.9,te;q=0.8,hi;q=0.7",
+        "cache-control": "no-cache",
+        "origin": "https://www.miruro.tv",
+        "pragma": "no-cache",
+        "referer": "https://www.miruro.tv/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cross-site",
+        "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+    }
 
     try:
-        # Step 2: Fetch session file
-        session_flag = fetch_session_by_name(client, SESSION_NAME, SESSION_NAME)
-        if session_flag != True:
-            print("⚠️ Invalid session file.")
-            mark_file_status(client, filename, success=False)
-            continue
+        session = requests.Session()
+        response = session.get(url, headers=headers, timeout=15)
+        response.raise_for_status()  # Raise an error for bad status codes
 
-        # Step 3: Use existing file_data directly
-        file_data = doc.get('file_data', [])
-        if not file_data:
-            print(f"⚠️ Empty or missing file_data in document: {filename}")
-            mark_file_status(client, filename, success=False)
-            continue
+        with open(filename, 'w', encoding='utf-8') as file:
+            file.write(response.text)
 
-        # Step 4: Process JSON file content
-        process_json_file(file_data)
-
-        # Step 5: Upload to Telegram
-        try:
-            upload_videos_to_telegram(
-                SESSION_NAME,
-                VIDEO_DIR,
-                keys_doc['CH_NAME'],
-                keys_doc
-            )
-        except Exception as e:
-            print("❌ Upload failed:", e)
-            traceback.print_exc()
-            mark_file_status(client, filename, success=False)
-            continue
-
-        # ✅ Step 6: Mark file as successfully processed
-        mark_file_status(client, filename, success=True)
-
+        print(f"✅ '{filename}' downloaded successfully!")
+        return True
     except Exception as e:
-        print("❌ General error during processing:", e)
-        traceback.print_exc()  # ✅ Print full traceback
-        mark_file_status(client, filename, success=False)
+        print(f"❌ Failed to download m3u8 file: {e}")
 
-    finally:
-        # 🧹 Cleanup all generated media
-        if os.path.exists(VIDEO_DIR):
-            shutil.rmtree(VIDEO_DIR)
-        for f in os.listdir():
-            if f.endswith(("mp4", "m3u8", "ts")):
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass  # Skip deletion error silently
+
+def get_json_file_data(filename):
+    if os.path.exists(filename):
+        with open(filename,'r',encoding='utf-8')as f:
+            file_data = json.load(f)
+            return file_data
+    return None
+
+def process_json_file(file_data):
+    os.makedirs("videos",exist_ok=True)
+
+    for index,obj in enumerate(file_data):
+        print(f"processing : {index}/{len(file_data)} ")
+        v_url = obj['video_url']
+        ep_num = obj['episode']
+        
+        if 'prxy' not in v_url:continue
+        
+        video_flag = download_m3u8(v_url)
+        if video_flag:
+            download_decrypt_merge(title=ep_num)
+      
+def get_bot_config(client, db_name='STORING_KEYS', collection_name='tele_bot_1', bot_uname="user_info_b_1_bot"):
+    """
+    Fetch a document where TELEGRAM_BOT_UNAME matches the given bot username.
+
+    Args:
+        client (MongoClient): The MongoDB client instance.
+        db_name (str): Name of the database.
+        collection_name (str): Name of the collection.
+        bot_uname (str): Telegram bot username to search for.
+
+    Returns:
+        dict or None: Matching document or None if not found.
+    """
+    db = client[db_name]
+    collection = db[collection_name]
+
+    query = {"TELEGRAM_BOT_UNAME": bot_uname}
+    result = collection.find_one(query)
+
+    if result:
+        print(f"✅ Found config for bot: {bot_uname}")
+        return result
+    else:
+        print(f"❌ No config found for bot: {bot_uname}")
+        return None
+
+
+def fetch_session_by_name(client,session_name, output_path=None):
+    """
+    Fetch a session file from MongoDB by filename.
+    
+    Args:
+        session_name (str): The name of the session file (e.g., 'session_3.session')
+        output_path (str): If provided, writes the file to this path.
+
+    Returns:
+        bytes: The binary content of the session file, or None if not found.
+    """
+    db = client["sessionDB"]
+    collection = db["sessions"]
+    doc = collection.find_one({"filename": session_name})
+    if doc:
+        binary_data = doc["data"]
+        if output_path:
+            with open(output_path, "wb") as f:
+                f.write(binary_data)
+            print(f"Session file written to: {output_path}")
+            return True
+        return None
+    else:
+        print(f"No session file found with name: {session_name}")
+        return None
+
+
+
+#url = ''
+# # Example usage:
+# video_flag  =  download_m3u8(url)
+
+# if video_flag:    
+
+#     download_decrypt_merge(title=12)
+
+#fetch_session_by_name("session_3.session", r"session_3.session")
