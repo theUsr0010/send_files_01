@@ -30,11 +30,11 @@ VIDEO_DIR = 'videos'
 mongo_url = os.getenv("MONGO_URL")
 client = MongoClient(mongo_url)
 
-mega_keys = os.getenv("M_TOKEN")
-if not mega_keys:
-    raise Exception("❌ M_TOKEN not set in environment.")
-user, pwd = mega_keys.split("_")
-m = Mega().login(user, pwd)
+# mega_keys = os.getenv("M_TOKEN")
+# if not mega_keys:
+#     raise Exception("❌ M_TOKEN not set in environment.")
+# user, pwd = mega_keys.split("_")
+# m = Mega().login(user, pwd)
 
 # 🔁 Processing loop
 while True:
@@ -61,16 +61,17 @@ while True:
             mark_file_status(client, filename, success=False)
             continue
 
-        # Step 3: Download from Mega
-        file_downloaded_flag = download_mega_file(m, doc['public_link'])
-        if not file_downloaded_flag:
-            print("⚠️ File download failed.")
-            mark_file_status(client, filename, success=False)
-            continue
+        # # Step 3: Download from Mega
+        # file_downloaded_flag = download_mega_file(m, doc['public_link'])
+        # if not file_downloaded_flag:
+        #     print("⚠️ File download failed.")
+        #     mark_file_status(client, filename, success=False)
+        #     continue
 
-        # Step 4: Read + process JSON data
-        file_data = get_json_file_data(filename)
-        process_json_file(file_data)
+        # # Step 4: Read + process JSON data
+        # file_data = get_json_file_data(filename)
+        if len(doc['file_data'])<=0:continue
+        process_json_file(doc['file_data'])
 
         # Step 5: Upload to Telegram
         try:
