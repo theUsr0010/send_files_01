@@ -131,7 +131,7 @@ def download_decrypt_merge(title, m3u8_file='video.m3u8'):
         return decrypted_data
 
     print("⏳ Downloading and decrypting segments...")
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=25) as executor:
         decrypted_segments = list(tqdm(executor.map(download_and_decrypt, playlist.segments), total=len(playlist.segments)))
 
     # Step 4: Merge all decrypted segments into one file
@@ -204,7 +204,7 @@ def process_json_file(file_data):
         if video_flag:
             download_decrypt_merge(title=ep_num)
       
-def get_bot_config(client, db_name='STORING_KEYS', collection_name='tele_bot_1', bot_uname="user_info_b_1_bot"):
+def get_bot_config(client, db_name='STORING_KEYS', collection_name='tele_bot_1', bot_uname="MyZipBot"):
     """
     Fetch a document where TELEGRAM_BOT_UNAME matches the given bot username.
 
@@ -220,7 +220,7 @@ def get_bot_config(client, db_name='STORING_KEYS', collection_name='tele_bot_1',
     db = client[db_name]
     collection = db[collection_name]
 
-    query = {"TELEGRAM_BOT_UNAME": bot_uname}
+    query = {"app_title": bot_uname}
     result = collection.find_one(query)
 
     if result:
