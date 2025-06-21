@@ -103,7 +103,6 @@ def mark_file_status(client, filename, success):
     collection.update_one({"filename": filename}, update)
 
 
-
 def download_decrypt_merge(title, m3u8_file='video.m3u8'):
     """
     Downloads and decrypts .ts video segments from an M3U8 playlist and merges them into a single MP4 file.
@@ -132,7 +131,7 @@ def download_decrypt_merge(title, m3u8_file='video.m3u8'):
 
     print("⏳ Downloading and decrypting segments...")
     with ThreadPoolExecutor(max_workers=25) as executor:
-        decrypted_segments = list(tqdm(executor.map(download_and_decrypt, playlist.segments), total=len(playlist.segments)))
+        decrypted_segments = list(executor.map(download_and_decrypt, playlist.segments))
 
     # Step 4: Merge all decrypted segments into one file
     ts_file = f"{title}.ts"
@@ -145,6 +144,7 @@ def download_decrypt_merge(title, m3u8_file='video.m3u8'):
     os.rename(ts_file, mp4_file)
 
     print(f"✅ Done! Video saved as '{mp4_file}'.")
+
 
 
 def download_m3u8(url, filename="video.m3u8"):
