@@ -26,7 +26,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install telethon pymongo tqdm m3u8 pycryptodome requests nest_asyncio mega.py
+          pip install telethon pymongo tqdm m3u8 pycryptodome requests nest_asyncio aiohttp mega.py
+
 
       - name: Run Python script
         run: python final.py
