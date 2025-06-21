@@ -7,7 +7,7 @@ from telethon.tl.types import InputMediaPhotoExternal
 
 nest_asyncio.apply()
 
-# ✅ GraphQL query to get anime info by ID
+# ✅ AniList GraphQL query
 ANIME_QUERY = """
 query ($id: Int) {
   Media(id: $id, type: ANIME) {
@@ -25,7 +25,7 @@ query ($id: Int) {
 }
 """
 
-# ✅ Get anime info from Anilist GraphQL
+# ✅ Fetch anime info by ID
 async def fetch_anime_info(anime_id: int):
     url = "https://graphql.anilist.co"
     json_payload = {"query": ANIME_QUERY, "variables": {"id": anime_id}}
@@ -44,33 +44,40 @@ async def fetch_anime_info(anime_id: int):
             else:
                 raise Exception(f"GraphQL failed: {resp.status}")
 
-# ✅ Upload a single file
+# ✅ Upload a single video file
 async def send_file(client, channel, file_path):
     try:
         print(f"🚀 Sending: {file_path}")
         await client.send_file(channel, file_path, caption=os.path.basename(file_path))
-        print(f"✅ Completed: {file_path}")
+        print(f"✅ Sent: {file_path}")
     except Exception as e:
         print(f"❌ Failed to send {file_path}: {e}")
 
-# ✅ Send all files with first message (anime details)
+# ✅ Extract episode ID safely
+def extract_episode_id(file_path):
+    try:
+        return int(os.path.basename(file_path).split('_')[1].split('.')[0])
+    except Exception:
+        return float('inf')  # push unparseable to the end
+
+# ✅ Upload all files + send anime info first
 async def send_all_files(session_name, videos_folder, channel, keys_data):
     client = TelegramClient(session_name, keys_data['api_id'], keys_data['api_hash'])
     await client.start()
 
-    # Sort files based on episode number (filename format: animeid_episodeid.mp4)
+    # Collect and sort video files
     files = [
         os.path.join(videos_folder, f)
         for f in os.listdir(videos_folder)
         if os.path.isfile(os.path.join(videos_folder, f)) and f.endswith('.mp4')
     ]
-    files.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))  # sort by episode_id
+    files.sort(key=extract_episode_id)
 
     if files:
+        # Extract anime ID from first filename
         first_file = os.path.basename(files[0])
-        anime_id = int(first_file.split('_')[0])
-
         try:
+            anime_id = int(first_file.split('_')[0])
             info = await fetch_anime_info(anime_id)
             message = f"🎬 **{info['title']}**\n\n{info['description']}\n\n🔗 [AniList]({info['site_url']})"
             await client.send_file(
@@ -79,30 +86,19 @@ async def send_all_files(session_name, videos_folder, channel, keys_data):
                 caption=message,
                 link_preview=False
             )
-            print("✅ Sent anime info message")
+            print("✅ Sent anime info")
         except Exception as e:
             print(f"❌ Failed to fetch/send anime info: {e}")
 
-    # Send videos
-    for file_path in files:
+    # Send each video one-by-one
+    for idx, file_path in enumerate(files, 1):
+        print(f"📦 Uploading ({idx}/{len(files)}): {os.path.basename(file_path)}")
         await send_file(client, channel, file_path)
 
     await client.disconnect()
+    print("✅ All files uploaded. Disconnected from Telegram.")
 
-# ✅ Wrapper to run the upload
+# ✅ Main wrapper
 def upload_videos_to_telegram(session_name, videos_folder, channel_url, keys_data):
     loop = asyncio.get_event_loop()
     loop.run_until_complete(send_all_files(session_name, videos_folder, channel_url, keys_data))
-
-
-# keys_data = {
-#     "api_id": 12345678,
-#     "api_hash": "abcd1234efgh5678ijkl9012mnop3456"
-# }
-
-# upload_videos_to_telegram(
-#     session_name="session_1",
-#     videos_folder=r"videos",
-#     channel_url="https://t.me/",
-#     keys_data=keys_data
-# )
