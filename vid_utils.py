@@ -190,10 +190,9 @@ def get_json_file_data(filename):
             return file_data
     return None
 
-def process_json_file(file_name):
+def process_json_file(file_data):
     os.makedirs("videos",exist_ok=True)
-    with open(file_name,'r',encoding='utf-8')as f:
-        file_data = json.load(f)
+
     for index,obj in enumerate(file_data):
         print(f"processing : {index}/{len(file_data)} ")
         v_url = obj['video_url']
