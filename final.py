@@ -25,7 +25,7 @@ from mega import Mega
 nest_asyncio.apply()
 
 # 🔧 Configs
-SESSION_NAME = 'session_1.session'
+SESSION_NAME = 'session_2.session'
 VIDEO_DIR = 'videos'
 
 # 🌐 MongoDB setup
@@ -70,7 +70,7 @@ while True:
             print(f"⚠️ Empty or missing file_data in document: {filename}")
             mark_file_status(client, filename, success=False)
             continue
-
+        anime_id = str(doc['file_name']).split("_")[0]
         # Step 4: Process JSON file content
         process_json_file(file_data)
 
